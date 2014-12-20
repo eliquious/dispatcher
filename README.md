@@ -28,7 +28,7 @@ func main() {
 	router := dispatcher.NewDispatcher(dispatcher.Config{BufferSize: BufferSize})
 
   // Number of producers
-  var WORKERS = 1024
+  var WORKERS = 256
 	fmt.Println("Workers: ", WORKERS)
 
   // Register event handler on channel called 'emit'
@@ -99,7 +99,7 @@ func (s SimpleWork) Start() {
 	s.isRunning = true
 	
 	// Emit events
-	for i := 0; i < 10000; i++ {
+	for i := 0; i < 1000; i++ {
 	  if !s.isRunning {
 	    break
 	  }
@@ -129,6 +129,10 @@ Batch Producer
 --------------
 
 ```go
+
+// Number of events to emit at one time
+var BATCHSIZE = 16
+
 // BatchWork is an event producer which emits events in batches.
 // Due to the Disruptor semantics, batch writes are highly performant and can yield much higher operations per second.
 type BatchWork struct {
