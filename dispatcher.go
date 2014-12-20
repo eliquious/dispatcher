@@ -1,7 +1,7 @@
 package dispatcher
 
 import (
-	"fmt"
+	// "fmt"
 	disruptor "github.com/smartystreets/go-disruptor"
 	"sync/atomic"
 	"time"
@@ -22,6 +22,8 @@ type Metrics struct {
 	producers        uint32
 	processed        uint64
 	elapsed          time.Duration
+	Started          time.Time
+	Stopped          time.Time
 }
 
 func (m *Metrics) IncrEvents(count uint64) uint64 {
@@ -57,7 +59,48 @@ func (m *Metrics) Producers() uint32 {
 }
 
 func (m *Metrics) Elapsed() time.Duration {
+
+	// never started
+	if m.Started.Nanosecond() == 0 {
+		return 0
+	}
+
+	// still running
+	if m.Stopped.Nanosecond() == 0 {
+		return time.Now().Sub(m.Started)
+	}
+
+	// finished
+	m.elapsed = m.Stopped.Sub(m.Started)
 	return m.elapsed
+}
+
+func (m *Metrics) Start() {
+	if m.Started.Nanosecond() == 0 {
+		m.Started = time.Now()
+	}
+}
+
+func (m *Metrics) Stop() {
+	if m.Stopped.Nanosecond() == 0 {
+		m.Stopped = time.Now()
+	}
+}
+
+func (m *Metrics) EventsPerSecond() uint64 {
+	elapsed := m.Elapsed()
+	if elapsed > 0 {
+		return uint64(float64(m.TotalEvents()) / (elapsed.Seconds()))
+		// return uint64(elapsed.Nanoseconds()) / m.TotalEvents()
+	}
+	return 0
+}
+
+func (m *Metrics) NanosecondsPerEvent() float64 {
+	if m.TotalEvents() > 0 {
+		return float64(float64(m.Elapsed()) / float64(m.TotalEvents()))
+	}
+	return 0
 }
 
 func (m *Metrics) IncrProcessed(done uint64) uint64 {
@@ -127,7 +170,12 @@ func (d *DefaultDispatcher) Start() {
 		WithConsumerGroup(d.consumers...).
 		WithConsumerGroup(EndConsumer{d}).
 		BuildShared()
+
+	// start disruptor
 	d.controller.Start()
+
+	// log start time
+	d.Metrics.Start()
 }
 
 func (d *DefaultDispatcher) Stop() {
@@ -141,6 +189,8 @@ func (d *DefaultDispatcher) Stop() {
 		d.kill <- true
 	}
 
+	// log stop
+	d.Metrics.Stop()
 }
 
 // Add consumer
@@ -183,6 +233,7 @@ func (d *DefaultDispatcher) Emit(evt Event) {
 	// update metrics
 	d.Metrics.IncrEvents(1)
 	d.Metrics.IncrTotalBytes(uint64(len(evt.Data())))
+	time.Sleep(time.Nanosecond)
 }
 
 func (d *DefaultDispatcher) Batch(evts []Event) {
@@ -210,6 +261,9 @@ func (d *DefaultDispatcher) Batch(evts []Event) {
 	// metrics
 	d.Metrics.IncrEvents(uint64(len(evts)))
 	d.Metrics.IncrTotalBytes(uint64(bytes))
+
+	// ease contention
+	time.Sleep(time.Nanosecond)
 }
 
 // Returns an offset in the buffer
@@ -234,7 +288,6 @@ func (d *DefaultDispatcher) Join() {
 		default:
 			// fmt.Println("JOIN: Sleeping: ", d.Metrics.Processed(), " : ", d.Metrics.TotalEvents())
 			if d.Metrics.Processed() == d.Metrics.TotalEvents() && numProducers <= 0 {
-				fmt.Println("Closing Joiner")
 
 				// Stopping consumers
 				d.Stop()
